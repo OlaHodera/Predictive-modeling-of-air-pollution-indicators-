@@ -198,8 +198,10 @@ def merge_monthly_files(input_dir, pattern):
 #   O3           -> max daily 8-h running mean (target value: 120 µg/m³)
 #   CO           -> max daily 8-h running mean (limit value: 10 mg/m³)
 #
-# Minimum data capture: 75% of valid hourly readings per day (≥18/24 h),
-# following EEA assessment practice (EEA, 2024; Zenodo dataset 10.5281/14513586).
+# Minimum data capture (per EEA AirBase aggregation rules):
+#   - mean24h, max1h: ≥18 valid hourly values per day (75% of 24 h)
+#   - max8h: each 8-h running mean requires ≥6 valid hourly values (75% of 8 h),
+#            and the daily max requires ≥18 valid 8-h running means per day
 # ---------------------------------------------------------------------------
 
 DAILY_AGG = {
@@ -211,7 +213,8 @@ DAILY_AGG = {
     "CO":   "max8h",
 }
 
-MIN_HOURS = 18  # 75% of 24 hours
+MIN_HOURS = 18  # 75% of 24 hours — applies to mean24h, max1h, and number of valid 8h-windows for max8h
+MIN_HOURS_IN_8H_WINDOW = 6  # 75% of 8 hours — applies to validity of each individual 8h running mean
 
 
 def _agg_column(series_hourly, agg_type):
@@ -228,8 +231,12 @@ def _agg_column(series_hourly, agg_type):
         return series_hourly.resample('D').apply(daily_max)
 
     if agg_type == "max8h":
-        rolling8h = series_hourly.rolling(window=8, min_periods=6).mean()
-        return rolling8h.resample('D').max()
+        rolling8h = series_hourly.rolling(window=8, min_periods=MIN_HOURS_IN_8H_WINDOW).mean()
+        daily_max = rolling8h.resample('D').max()
+        # EEA: a daily 8-hour maximum requires ≥18 valid running 8-hour averages per day
+        valid_windows_per_day = rolling8h.notna().resample('D').sum()
+        daily_max[valid_windows_per_day < MIN_HOURS] = np.nan
+        return daily_max
 
     raise ValueError(f"Unknown agg_type: {agg_type}")
 
